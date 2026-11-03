@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# agentctl — the agent's recommended write path into the database (thin wrapper over SQL functions).
+# Context comes from env set by run-case.sh: SA_CASE_ID, SA_RUN_ID (+ PG* from agent.env).
+#
+#   agentctl context                      # case brief as markdown (terms, sources, recent runs)
+#   agentctl seen <url>                   # "yes"/"no": is this URL already saved for the case?
+#   agentctl post-save < post.json        # JSON object or array → upsert posts (+comments) into the case
+#   agentctl shot <png> [post_id]         # upload screenshot to S3 (and attach to post)
+#   agentctl alert <kind> <platform|-> <message>   # ask a human for help (login|captcha|2fa|blocked|ui_changed|other)
+#   agentctl term-propose < term.json     # {term, kind, parent_term?, lang?, rationale, evidence:[urls]}
+#   agentctl source-propose < src.json    # {platform, kind, value, rationale}
+#   agentctl run-summary < summary.md     # final summary of this run (Serbian)
+#   agentctl stats                        # quick numbers for the case
+
+set -Eeuo pipefail
+
+if [[ -z "${PGUSER:-}" && -f "$HOME/.config/social-agent/agent.env" ]]; then
+  set -a; . "$HOME/.config/social-agent/agent.env"; set +a
+fi
+
+die() { echo "agentctl: $*" >&2; exit 1; }
+need_case() { [[ -n "${SA_CASE_ID:-}" ]] || die "SA_CASE_ID nije postavljen (pokreće ga run-case.sh)"; }
+q() { psql -X -q -tA -v ON_ERROR_STOP=1 "$@"; }
+
+# Read JSON from agentctl's stdin into a temp file, expose it to psql as :'j' (no argv size
+# limit), then run the SQL given as $1.
+with_json_stdin() {
+  local sql="$1" tmp; tmp="$(mktemp)"
+  cat > "$tmp"
+  if ! jq -e . "$tmp" >/dev/null 2>&1; then rm -f "$tmp"; die "ulaz nije validan JSON"; fi
+  local rc=0
+  { printf '\\set j `cat %q`\n' "$tmp"; printf '%s\n' "$sql"; } \
+    | q -v case="${SA_CASE_ID:-}" -v run="${SA_RUN_ID:-}" || rc=$?
+  rm -f "$tmp"
+  return "$rc"
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  context)
+    need_case
+    q -v case="$SA_CASE_ID" <<'SQL'
+SELECT format(E'# %s\n\n- **Klijent:** %s\n- **Tip:** %s\n- **Status:** %s\n- **Platforme (dozvoljene sada):** %s\n- **Interval:** %s min\n- **Postova ukupno:** %s · poslednjih 24h: %s\n%s%s',
+  c.name, cl.name, c.type, c.status,
+  coalesce(nullif(array_to_string(case_runnable_platforms(c.id), ', '), ''), '— nijedna'),
+  c.interval_minutes,
+  (SELECT count(*) FROM case_posts WHERE case_id = c.id),
+  (SELECT count(*) FROM case_posts WHERE case_id = c.id AND created_at > now() - interval '24 hours'),
+  CASE WHEN c.description IS NOT NULL THEN E'\n## Cilj\n\n' || c.description || E'\n' ELSE '' END,
+  CASE WHEN c.instructions IS NOT NULL THEN E'\n## Posebna uputstva\n\n' || c.instructions || E'\n' ELSE '' END)
+FROM cases c JOIN clients cl ON cl.id = c.client_id WHERE c.id = :'case';
+
+SELECT E'\n## Pojmovi (case_terms)\n\n| pojam | vrsta | jezik | platforme | težina | poreklo/status | napomena |\n|---|---|---|---|---|---|---|\n' ||
+  coalesce(string_agg(format('| %s | %s | %s | %s | %s | %s/%s | %s |', t.term, t.kind, coalesce(t.lang, ''),
+    coalesce(array_to_string(t.platforms, ','), 'sve'), t.weight, t.origin, t.status,
+    replace(coalesce(t.metadata->>'note', t.rationale, ''), '|', '/')), E'\n' ORDER BY t.kind = 'exclude', t.weight DESC, t.term), '| — |||||||')
+FROM case_terms t WHERE t.case_id = :'case' AND t.status <> 'retired';
+
+SELECT E'\n## Izvori (case_sources)\n\n' ||
+  coalesce(string_agg(format('- `%s` · %s · %s%s', s.platform, s.kind, s.value,
+    CASE WHEN s.origin = 'agent' THEN ' (predlog agenta, ' || s.status || ')' ELSE '' END), E'\n' ORDER BY s.platform, s.kind, s.value),
+    '- nema definisanih izvora — koristi pretragu po pojmovima i predloži izvore')
+FROM case_sources s WHERE s.case_id = :'case' AND s.status <> 'retired';
+
+SELECT E'\n## Poslednji runovi\n\n' ||
+  coalesce(string_agg(format('- %s · %s · +%s postova, +%s komentara%s', to_char(r.started_at, 'YYYY-MM-DD HH24:MI'), r.status,
+    r.new_posts, r.new_comments, CASE WHEN r.summary IS NOT NULL THEN E'\n  > ' || replace(left(r.summary, 600), E'\n', E'\n  > ') ELSE '' END),
+    E'\n' ORDER BY r.started_at DESC), '- ovo je prvi run za ovaj slučaj')
+FROM (SELECT * FROM runs WHERE case_id = :'case' AND status <> 'running' ORDER BY started_at DESC LIMIT 3) r;
+SQL
+    ;;
+
+  seen)
+    need_case; [[ -n "${1:-}" ]] || die "upotreba: agentctl seen <url>"
+    r="$(q -v case="$SA_CASE_ID" -v url="$1" <<<"SELECT case_has_url(:'case', :'url');")"
+    [[ "$r" == t ]] && echo yes || echo no
+    ;;
+
+  post-save)
+    need_case
+    with_json_stdin "$(cat <<'SQL'
+SELECT jsonb_pretty(jsonb_agg(save_post(:'case'::uuid, nullif(:'run', '')::uuid, e)))
+FROM jsonb_array_elements(CASE WHEN jsonb_typeof(:'j'::jsonb) = 'array' THEN :'j'::jsonb ELSE jsonb_build_array(:'j'::jsonb) END) e;
+SQL
+)"
+    ;;
+
+  shot)
+    need_case; f="${1:-}"; [[ -f "$f" ]] || die "upotreba: agentctl shot <fajl.png> [post_id]"
+    slug="$(q -v case="$SA_CASE_ID" <<<"SELECT slug FROM cases WHERE id = :'case';")"
+    key="cases/$slug/shots/$(date +%Y/%m/%d)/$(date +%H%M%S)-$(basename "$f")"
+    rclone copyto "$f" "s3:${S3_BUCKET}/$key"
+    if [[ -n "${2:-}" ]]; then q -v k="$key" -v p="$2" <<<"UPDATE posts SET screenshot_key = :'k' WHERE id = :'p';"; fi
+    echo "$key"
+    ;;
+
+  alert)
+    [[ $# -ge 3 ]] || die "upotreba: agentctl alert <kind> <platform|-> <poruka>"
+    kind="$1"; plat="$2"; shift 2; msg="$*"
+    [[ "$plat" == "-" ]] && plat=""
+    q -v kind="$kind" -v plat="$plat" -v msg="$msg" -v case="${SA_CASE_ID:-}" -v run="${SA_RUN_ID:-}" <<'SQL'
+INSERT INTO alerts (kind, platform, message, case_id, run_id)
+VALUES (:'kind', nullif(:'plat', ''), :'msg', nullif(:'case', '')::uuid, nullif(:'run', '')::uuid)
+RETURNING 'alert ' || id || ' otvoren' || CASE WHEN platform IS NOT NULL THEN ' — platforma ' || platform || ' pauzirana dok čovek ne reši' ELSE '' END;
+SQL
+    ;;
+
+  term-propose)
+    need_case
+    with_json_stdin "$(cat <<'SQL'
+INSERT INTO case_terms (case_id, parent_id, term, kind, lang, platforms, weight, metadata, origin, status, rationale, evidence, created_run_id)
+SELECT :'case'::uuid,
+       (SELECT id FROM case_terms WHERE case_id = :'case'::uuid AND lower(term) = lower(j->>'parent_term') LIMIT 1),
+       j->>'term', coalesce(j->>'kind', 'keyword'), j->>'lang',
+       CASE WHEN j ? 'platforms' THEN ARRAY(SELECT jsonb_array_elements_text(j->'platforms')) END,
+       coalesce((j->>'weight')::real, 0.5), coalesce(j->'metadata', '{}'), 'agent', 'probation',
+       j->>'rationale', coalesce(j->'evidence', '[]'), nullif(:'run', '')::uuid
+FROM (SELECT :'j'::jsonb AS j) s
+ON CONFLICT (case_id, kind, lower(term)) DO NOTHING
+RETURNING 'pojam dodat (probation): ' || term;
+SQL
+)"
+    ;;
+
+  source-propose)
+    need_case
+    with_json_stdin "$(cat <<'SQL'
+INSERT INTO case_sources (case_id, platform, kind, value, metadata, origin, status, rationale)
+SELECT :'case'::uuid, j->>'platform', j->>'kind', j->>'value', coalesce(j->'metadata', '{}'), 'agent', 'probation', j->>'rationale'
+FROM (SELECT :'j'::jsonb AS j) s
+ON CONFLICT (case_id, platform, kind, lower(value)) DO NOTHING
+RETURNING 'izvor dodat (probation): ' || platform || ' ' || kind || ' ' || value;
+SQL
+)"
+    ;;
+
+  run-summary)
+    [[ -n "${SA_RUN_ID:-}" ]] || die "SA_RUN_ID nije postavljen"
+    s="$(cat)"; [[ -n "$s" ]] || die "prazan summary"
+    q -v run="$SA_RUN_ID" -v s="$s" <<<"UPDATE runs SET summary = :'s' WHERE id = :'run' RETURNING 'summary sačuvan';"
+    ;;
+
+  stats)
+    need_case
+    q -v case="$SA_CASE_ID" <<'SQL'
+SELECT format('postova: %s · danas: %s · komentara: %s · po izvoru: %s',
+  count(*), count(*) FILTER (WHERE cp.created_at > now() - interval '24 hours'),
+  (SELECT count(*) FROM comments co JOIN case_posts x ON x.post_id = co.post_id WHERE x.case_id = :'case'),
+  (SELECT string_agg(d || '=' || n, ', ') FROM (SELECT coalesce(po2.source_domain, po2.platform) d, count(*) n
+     FROM case_posts cp2 JOIN posts po2 ON po2.id = cp2.post_id WHERE cp2.case_id = :'case' GROUP BY 1 ORDER BY 2 DESC LIMIT 10) z))
+FROM case_posts cp WHERE cp.case_id = :'case';
+SQL
+    ;;
+
+  help|-h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "nepoznata komanda: $cmd (agentctl help)" ;;
+esac
