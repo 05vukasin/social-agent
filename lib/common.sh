@@ -40,7 +40,12 @@ env_set() {
 }
 
 rand_hex()   { openssl rand -hex "${1:-32}"; }
-rand_alnum() { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "${1:-32}"; }
+# No `tr </dev/urandom | head`: head closing the pipe SIGPIPEs tr, which pipefail turns into a failure.
+rand_alnum() {
+  local n="${1:-32}" s=""
+  while ((${#s} < n)); do s+="$(openssl rand -base64 96 | tr -dc 'A-Za-z0-9')"; done
+  printf '%s' "${s:0:n}"
+}
 
 pkg_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
 pkgs_missing() { local p m=(); for p in "$@"; do pkg_installed "$p" || m+=("$p"); done; echo "${m[*]:-}"; }
