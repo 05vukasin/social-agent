@@ -33,8 +33,8 @@ apply() {
   install -m 755 "$SA_REPO/templates/desktop/agent-chrome" "$LAUNCHER"
 
   local home="/home/$AGENT_USER"
-  install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$home/chrome-profile"
-  install -d -o "$AGENT_USER" -g "$AGENT_USER" "$home/.config/autostart" "$home/Desktop"
+  agent_mkdir -m 700 "$home/chrome-profile"
+  agent_mkdir "$home/.config/autostart" "$home/Desktop"
   install -m 644 -o "$AGENT_USER" -g "$AGENT_USER" "$SA_REPO/templates/desktop/agent-chrome.desktop" "$home/.config/autostart/agent-chrome.desktop"
   install -m 755 -o "$AGENT_USER" -g "$AGENT_USER" "$SA_REPO/templates/desktop/agent-chrome.desktop" "$home/Desktop/agent-chrome.desktop"
 

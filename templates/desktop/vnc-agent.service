@@ -8,7 +8,7 @@ User=${AGENT_USER}
 WorkingDirectory=/home/${AGENT_USER}
 Environment=HOME=/home/${AGENT_USER}
 ExecStartPre=-/usr/bin/tigervncserver -kill :1
-ExecStart=/usr/bin/tigervncserver :1 -fg -localhost yes -geometry ${VNC_GEOMETRY} -depth 24 -SecurityTypes VncAuth -PasswordFile /home/${AGENT_USER}/.vnc/passwd -xstartup /home/${AGENT_USER}/.vnc/xstartup
+ExecStart=/usr/bin/tigervncserver :1 -fg -localhost yes -geometry ${VNC_GEOMETRY} -depth 24 -SecurityTypes VncAuth -PasswordFile /home/${AGENT_USER}/.config/tigervnc/passwd -xstartup /home/${AGENT_USER}/.config/tigervnc/xstartup
 ExecStop=/usr/bin/tigervncserver -kill :1
 Restart=on-failure
 RestartSec=5

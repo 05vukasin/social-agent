@@ -35,7 +35,7 @@ check() {
 
 apply() {
   local f; f="$(agent_env_file)"
-  install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$(dirname "$f")"
+  agent_mkdir -m 700 "$(dirname "$f")"
   agent_env > "$f"
   chown "$AGENT_USER:$AGENT_USER" "$f"; chmod 600 "$f"
 

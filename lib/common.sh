@@ -96,3 +96,26 @@ listens_on_loopback_only() {
   [[ -n "$addrs" ]] || return 1
   ! grep -qvE '^(127\.0\.0\.1|\[::1\]):[0-9]+$' <<<"$addrs"
 }
+
+# Create directories under the agent's home AS the agent, so every intermediate level
+# (~/.config, ~/.config/xfce4, ...) is agent-owned. `install -d -o` only chowns the leaf.
+#   agent_mkdir [-m MODE] DIR...
+agent_mkdir() {
+  local mode=""
+  if [[ "${1:-}" == "-m" ]]; then mode="$2"; shift 2; fi
+  local d
+  for d in "$@"; do
+    sudo -u "$AGENT_USER" mkdir -p "$d"
+    [[ -n "$mode" ]] && chmod "$mode" "$d"
+  done
+  return 0
+}
+
+# Repair: anything under the agent's ~/.config or ~/.local created by root earlier.
+agent_fix_home_owner() {
+  local home="/home/$AGENT_USER" d
+  for d in "$home/.config" "$home/.local"; do
+    [[ -e "$d" ]] && chown -R "$AGENT_USER:$AGENT_USER" "$d"
+  done
+  return 0
+}

@@ -58,7 +58,7 @@ apply() {
   install -d -m 700 /root/.config/rclone
   rclone_conf > /root/.config/rclone/rclone.conf; chmod 600 /root/.config/rclone/rclone.conf
   local ah="/home/$AGENT_USER"
-  install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$ah/.config" "$ah/.config/rclone"
+  agent_mkdir -m 700 "$ah/.config" "$ah/.config/rclone"
   rclone_conf > "$ah/.config/rclone/rclone.conf"
   chown "$AGENT_USER:$AGENT_USER" "$ah/.config/rclone/rclone.conf"; chmod 600 "$ah/.config/rclone/rclone.conf"
 
