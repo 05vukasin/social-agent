@@ -94,6 +94,23 @@ Obaveštenja (Telegram, email ili drugo) i dnevni health izveštaj idu u fazu 3.
 | X | 3 | Pretraga (traži login) |
 | LinkedIn | 3 | Najagresivniji prema automatizaciji: najređi interval, najoprezniji nalog |
 | TikTok | kasnije | Unet u `platforms`, ali isključen |
+| **Web** | 3 (prva) | Vesti, portali, forumi i blogovi kroz isti Chrome. Detalji su ispod. |
+
+### Web (vesti, portali, forumi)
+
+Web je zasebna „platforma“ (`platform = 'web'`) i ide kroz isti model: članak ili tema na forumu upisuje se kao `posts`, a komentari ispod članka kao `comments`.
+
+| Tip izvora (`case_sources.kind`) | Primer | Kako Claude radi |
+|---|---|---|
+| `search` | Google, Google News, Bing: „AIK banka“ | Pretraga sa filterom vremena (poslednjih 24h ili 7 dana), otvara rezultate |
+| `site` | `n1info.rs`, `nova.rs`, `blic.rs`, `kurir.rs`, `b92.net`, `novosti.rs`, `ekapija.com`, `bizlife.rs`, `nova-ekonomija.rs` | `site:` pretraga i interna pretraga portala |
+| `forum` | forumi, Q&A sajtovi, recenzije (Google Maps recenzije filijala) | Teme i odgovori; za recenzije: tekst, ocena i datum |
+| `rss` | RSS ili Atom feed portala | Najjeftiniji izvor: Claude prvo čita feed (`curl`), a browser otvara samo pogođene članke |
+| `url` | konkretna stranica koja se prati | Ponovna poseta, beleži promene |
+
+- Za web ključ za deduplikaciju je normalizovan URL (`external_id = sha256(canonical_url)`), a `posts.source_domain` čuva domen. Isti članak koji prenese više portala vezuje se preko `raw.canonical_url` i naslova.
+- Za web nema login-a ni blokada naloga. Jedini rizik je captcha provera na Google pretrazi, koja otvara alert kao i na ostalim mrežama, a Claude za to vreme prelazi na Bing, DuckDuckGo ili RSS.
+- Interval je češći od mreža: podrazumevano 60 minuta.
 
 ## 7. Rizici
 
