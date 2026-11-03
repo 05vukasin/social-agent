@@ -62,7 +62,11 @@ Rules that apply everywhere:
 `vest`, `saopštenje`, `reklama`, `žalba`, `pohvala`, `pitanje`, `kriza`, `proizvod`, `zaposleni`,
 `regulativa`, `konkurencija`, `prevara`, `recenzija`.
 
-Pipe JSON with a heredoc: `agentctl post-save <<'EOF' ... EOF`.
+**How to pass JSON:** write it with the Write tool to a file inside the case folder
+(`runs/batch-1.json`, `runs/batch-2.json`, …) and run `agentctl post-save --file runs/batch-1.json`.
+Every agentctl command that reads stdin accepts `--file <path>`. Heredocs, `<` redirects, `cd … &&`
+chains and files outside the case folder are blocked by permissions — don't use them; run each
+command on its own, from the case folder.
 
 ## 3. Kad nešto blokira
 
@@ -81,10 +85,13 @@ other platforms/sources. Use platform `-` for problems not tied to a platform.
 
 - **Pojmovi**: if you repeatedly see a sub-topic that clearly matters for the subject (a product
   name, a campaign, a person, a hashtag, a Cyrillic variant), propose it — with evidence:
-  `agentctl term-propose <<'EOF' {"term": "...", "kind": "product", "parent_term": "AIK banka", "rationale": "...", "evidence": ["url1","url2"]} EOF`
+  write `{"term": "...", "kind": "product", "parent_term": "AIK banka", "rationale": "...", "evidence": ["url1","url2"]}`
+  to `runs/term.json`, then `agentctl term-propose --file runs/term.json`.
+  Valid kinds: keyword, alias, product, person, organization, event, hashtag, account, location, exclude.
   You can hold at most 10 own terms per case (DB enforces it). Never remove CRM terms.
 - **Izvori**: a portal/forum/feed that keeps producing relevant items →
-  `agentctl source-propose <<'EOF' {"platform":"web","kind":"site","value":"example.rs","rationale":"..."} EOF`
+  `{"platform":"web","kind":"site","value":"example.rs","rationale":"..."}` → `runs/source.json` →
+  `agentctl source-propose --file runs/source.json`.
   Kinds for web: `site`, `rss`, `forum`, `search`, `url`.
 - **NOTES.md** — rewrite it (don't just append) so it stays under ~4000 characters:
   what works (queries, sources, timing), noise patterns to skip, open threads to follow next run,
@@ -96,15 +103,14 @@ other platforms/sources. Use platform `-` for problems not tied to a platform.
 ## 5. Kraj runa (obavezno)
 
 1. `agentctl stats` to see the totals.
-2. Write the run summary in Serbian (markdown, ≤ 15 lines) and save it:
-   ```bash
-   agentctl run-summary <<'EOF'
+2. Write the run summary in Serbian (markdown, ≤ 15 lines) to `runs/summary.md` and save it with
+   `agentctl run-summary --file runs/summary.md`. Shape:
+   ```markdown
    **Novo:** 7 članaka, 23 komentara (web).
    **Teme:** ...
    **Ton:** pretežno neutralan; negativno oko ...
    **Izdvojeno:** [naslov](url) — zašto je bitno
    **Sledeći put:** ...
-   EOF
    ```
 3. Close browser tabs you opened (leave one blank tab).
 4. Your final message: the same summary.

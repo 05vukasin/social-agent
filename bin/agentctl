@@ -4,7 +4,8 @@
 #
 #   agentctl context                      # case brief as markdown (terms, sources, recent runs)
 #   agentctl seen <url>                   # "yes"/"no": is this URL already saved for the case?
-#   agentctl post-save < post.json        # JSON object or array → upsert posts (+comments) into the case
+#   agentctl post-save --file runs/b1.json  # JSON object or array → upsert posts (+comments) into the case
+#                                         # (every stdin command also accepts --file <path> instead of stdin)
 #   agentctl shot <png> [post_id]         # upload screenshot to S3 (and attach to post)
 #   agentctl alert <kind> <platform|-> <message>   # ask a human for help (login|captcha|2fa|blocked|ui_changed|other)
 #   agentctl term-propose < term.json     # {term, kind, parent_term?, lang?, rationale, evidence:[urls]}
@@ -36,6 +37,13 @@ with_json_stdin() {
 }
 
 cmd="${1:-help}"; shift || true
+# `--file <path>` anywhere → read that file as stdin (heredocs/redirects are often blocked by permissions).
+args=()
+while (($#)); do
+  if [[ "$1" == --file ]]; then [[ -f "${2:-}" ]] || die "nema fajla: ${2:-}"; exec < "$2"; shift 2
+  else args+=("$1"); shift; fi
+done
+set -- "${args[@]+"${args[@]}"}"
 case "$cmd" in
   context)
     need_case

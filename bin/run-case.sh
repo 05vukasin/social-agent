@@ -90,6 +90,7 @@ ALLOWED=(
   "Read" "Write" "Edit" "Glob" "Grep" "Skill" "TodoWrite"
   "Bash(agentctl:*)" "Bash(psql:*)" "Bash(curl:*)" "Bash(jq:*)" "Bash(date:*)"
   "Bash(ls:*)" "Bash(cat:*)" "Bash(head:*)" "Bash(grep:*)" "Bash(wc:*)" "Bash(python3:*)"
+  "Bash(mkdir:*)" "Bash(cp:*)" "Bash(mv:*)"
 )
 
 OUT="$DIR/runs/$TS.json"
@@ -107,7 +108,8 @@ rc=0
 ) > "$OUT" 2> "$DIR/runs/$TS.stderr" || rc=$?
 
 # ------------------------------------------------------------------ record result
-is_error="$(jq -r '.is_error // true' "$OUT" 2>/dev/null || echo true)"
+# NB: not `.is_error // true` — jq's // treats false as missing.
+is_error="$(jq -r 'if has("is_error") then .is_error else true end' "$OUT" 2>/dev/null || echo true)"
 result_text="$(jq -r '.result // ""' "$OUT" 2>/dev/null || true)"
 if ((rc == 124 || rc == 137)); then
   status=timeout
