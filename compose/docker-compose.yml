@@ -1,0 +1,47 @@
+# social-agent data services. Everything binds to 127.0.0.1 — reach from outside via SSH tunnel.
+# Values come from /etc/social-agent/.env (passed with --env-file by lib/common.sh:compose()).
+
+name: social-agent
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${SA_TZ}
+      PGTZ: ${SA_TZ}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_connections=50
+      - -c
+      - log_min_duration_statement=2000
+    volumes:
+      - ${SA_DATA}/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  garage:
+    # S3-compatible object storage (MinIO community edition is unmaintained since late 2025).
+    image: dxflrs/garage:v2.4.1
+    restart: unless-stopped
+    volumes:
+      - ${SA_DATA}/garage/garage.toml:/etc/garage.toml:ro
+      - ${SA_DATA}/garage/meta:/var/lib/garage/meta
+      - ${SA_DATA}/garage/data:/var/lib/garage/data
+    ports:
+      - "127.0.0.1:3900:3900"   # S3 API
+      - "127.0.0.1:3903:3903"   # admin API

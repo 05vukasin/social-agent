@@ -1,0 +1,3 @@
+# DESCRIPTION / SA_MODULE are read by lib/run-module.sh after sourcing a module
+disable=SC2034
+external-sources=true

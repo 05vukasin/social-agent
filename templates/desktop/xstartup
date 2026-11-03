@@ -1,0 +1,10 @@
+#!/bin/sh
+# VNC session for the agent user — full XFCE desktop.
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=XFCE
+[ -r "$HOME/.Xresources" ] && xrdb "$HOME/.Xresources"
+# Disable X screen blanking — this desktop is watched by a robot, not a monitor.
+xset s off -dpms 2>/dev/null || true
+exec dbus-launch --exit-with-session startxfce4

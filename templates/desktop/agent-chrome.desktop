@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Agent Chrome
+Comment=Chrome sa trajnim profilom agenta (CDP 127.0.0.1:9222)
+Exec=/usr/local/bin/agent-chrome
+Icon=google-chrome
+Terminal=false
+X-GNOME-Autostart-enabled=true
