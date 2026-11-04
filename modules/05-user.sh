@@ -10,7 +10,7 @@ check() {
   user_exists "$AGENT_USER" || return 1
   id -nG "$AGENT_USER" | grep -qw sudo || return 1
   [[ -s "/home/$AGENT_USER/.ssh/authorized_keys" ]] || return 1
-  [[ -f "$SSHD_DROPIN" ]] || return 1
+  grep -q ClientAliveInterval "$SSHD_DROPIN" 2>/dev/null || return 1
   [[ -d "$SA_DATA/cases" ]] || return 1
 }
 
@@ -41,6 +41,9 @@ KbdInteractiveAuthentication no
 PermitRootLogin prohibit-password
 X11Forwarding no
 AllowTcpForwarding yes
+# Persistent dashboard tunnels: detect dead clients fast so reconnects never hit stale sessions.
+ClientAliveInterval 30
+ClientAliveCountMax 3
 EOF
   sshd -t
   systemctl reload ssh
