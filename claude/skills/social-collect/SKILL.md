@@ -52,6 +52,7 @@ Rules that apply everywhere:
   "sentiment": -0.4,
   "tags": ["vest", "kredit"],
   "note": "Jedna rečenica: zašto je bitno za slučaj.",
+  "media": [{"type": "image", "url": "https://www.example.rs/og-slika.jpg", "role": "og"}],
   "comments": [
     {"author_name": "korisnik123", "body": "tekst komentara", "published_at": "2026-11-03T11:00:00+01:00", "sentiment": -0.6}
   ]
@@ -67,6 +68,12 @@ Rules that apply everywhere:
 Every agentctl command that reads stdin accepts `--file <path>`. Heredocs, `<` redirects, `cd … &&`
 chains and files outside the case folder are blocked by permissions — don't use them; run each
 command on its own, from the case folder.
+
+**Slike (obavezno).** Dashboard je vizuelan — svaka objava treba sliku. U `media` stavi glavnu
+sliku članka / posta (`og:image` iz `<head>`, ili prva slika iz posta) kad je vidiš. Posle svakog
+`post-save` pokreni `agentctl snap <post_id> [<post_id>…]` za nove objave (`post_id` je u
+izlazu `post-save`): sistem napravi screenshot stranice u S3 i sam dopuni `og:image` ako nedostaje.
+Traje ~10 s po objavi; ako run kasni, preskoči — `agentctl snap --missing` to nadoknađuje.
 
 ## 3. Kad nešto blokira
 

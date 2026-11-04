@@ -7,6 +7,7 @@
 #   agentctl post-save --file runs/b1.json  # JSON object or array → upsert posts (+comments) into the case
 #                                         # (every stdin command also accepts --file <path> instead of stdin)
 #   agentctl shot <png> [post_id]         # upload screenshot to S3 (and attach to post)
+#   agentctl snap <post_id>... | --missing [n]  # screenshot stranice + og:image za sačuvane postove
 #   agentctl alert <kind> <platform|-> <message>   # ask a human for help (login|captcha|2fa|blocked|ui_changed|other)
 #   agentctl term-propose < term.json     # {term, kind, parent_term?, lang?, rationale, evidence:[urls]}
 #   agentctl source-propose < src.json    # {platform, kind, value, rationale}
@@ -100,6 +101,50 @@ SQL
     rclone copyto "$f" "s3:${S3_BUCKET}/$key"
     if [[ -n "${2:-}" ]]; then q -v k="$key" -v p="$2" <<<"UPDATE posts SET screenshot_key = :'k' WHERE id = :'p';"; fi
     echo "$key"
+    ;;
+
+  snap)
+    # Visual evidence for a saved post: headless-Chrome screenshot → S3 (posts.screenshot_key)
+    # + og:image/twitter:image → posts.media (if empty). Works without a case (backfill).
+    #   agentctl snap <post_id>...   |   agentctl snap --missing [limit]
+    if [[ "${1:-}" == --missing ]]; then
+      mapfile -t ids < <(q -v lim="${2:-50}" <<<"SELECT id FROM posts WHERE screenshot_key IS NULL AND platform = 'web' ORDER BY first_seen_at DESC LIMIT :lim;")
+    else
+      ids=("$@")
+    fi
+    ((${#ids[@]})) || { echo "nema postova za snap"; exit 0; }
+    tmpd="$(mktemp -d)"; trap 'rm -rf "$tmpd"' EXIT
+    for id in "${ids[@]}"; do
+      url="$(q -v p="$id" <<<"SELECT url FROM posts WHERE id = :'p';")"
+      [[ -n "$url" ]] || { echo "$id: nema posta" >&2; continue; }
+      png="$tmpd/$id.png"
+      timeout 60 google-chrome-stable --headless=new --disable-gpu --no-first-run --hide-scrollbars \
+        --user-data-dir="$tmpd/profile" --window-size=1280,1600 --virtual-time-budget=8000 \
+        --lang=sr --screenshot="$png" "$url" >/dev/null 2>&1 || true
+      key=""
+      if [[ -s "$png" ]]; then
+        key="posts/$(date +%Y/%m)/$id.png"
+        rclone copyto "$png" "s3:${S3_BUCKET}/$key"
+      fi
+      og="$(curl -sL --max-time 20 -A 'Mozilla/5.0 (X11; Linux x86_64) Chrome/140 Safari/537.36' "$url" 2>/dev/null | head -c 600000 \
+        | python3 -c 'import sys,re,html
+s=sys.stdin.read()
+for p in ("og:image:secure_url","og:image","twitter:image","twitter:image:src"):
+  for m in re.finditer(r"<meta[^>]+>",s,re.I):
+    t=m.group(0)
+    if re.search(r"(property|name)\s*=\s*[\"\x27]"+re.escape(p)+r"[\"\x27]",t,re.I):
+      c=re.search(r"content\s*=\s*[\"\x27]([^\"\x27]+)",t,re.I)
+      if c: print(html.unescape(c.group(1)).strip()); sys.exit()' 2>/dev/null || true)"
+      if [[ "$og" == //* ]]; then og="https:$og"
+      elif [[ -n "$og" && "$og" != http* ]]; then og="$(python3 -c 'import sys,urllib.parse as u;print(u.urljoin(sys.argv[1],sys.argv[2]))' "$url" "$og")"; fi
+      q -v p="$id" -v k="$key" -v og="$og" <<'SQL'
+UPDATE posts SET
+  screenshot_key = coalesce(nullif(:'k', ''), screenshot_key),
+  media = CASE WHEN media = '[]'::jsonb AND :'og' <> '' THEN jsonb_build_array(jsonb_build_object('type', 'image', 'url', :'og', 'role', 'og')) ELSE media END
+WHERE id = :'p';
+SQL
+      echo "$id  shot:${key:-—}  og:${og:-—}"
+    done
     ;;
 
   alert)

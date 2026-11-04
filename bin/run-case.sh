@@ -166,6 +166,9 @@ FROM cases WHERE id = :'c' AND consecutive_failures >= 3 AND status = 'active';
 UPDATE cases SET status = 'paused' WHERE id = :'c' AND consecutive_failures >= 3;
 SQL
 
+# Visual evidence for anything the agent did not snap itself (screenshot + og:image). Best effort.
+timeout 15m "$SA_REPO/bin/agentctl" snap --missing 40 >>"$DIR/runs/$TS.snap.log" 2>&1 || true
+
 git -C "$DIR" add -A
 git -C "$DIR" commit -q -m "run $TS · $status · $(q -v r="$RUN_ID" <<<"SELECT '+' || new_posts || ' postova, +' || new_comments || ' komentara' FROM runs WHERE id = :'r';")" || true
 
