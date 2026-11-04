@@ -4,3 +4,4 @@
 *.dump
 *.tar.zst
 .DS_Store
+dashboard/
