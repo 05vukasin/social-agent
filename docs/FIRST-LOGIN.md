@@ -120,3 +120,21 @@ sudo ./setup.sh --status
 sudo ./setup.sh
 sudo ./setup.sh --force 20-desktop   # ponovo primeni jedan modul
 ```
+
+## Zdravlje sistema i alerti
+
+`bin/healthcheck.sh` se pokreće na svakih 5 minuta (cron, korisnik `agent`) i upisuje stanje svake komponente u `system_health`: `claude_auth`, `chrome`, `desktop`, `postgres`, `s3`, `disk`, `dispatcher`, `runs`, `backup`.
+
+- Kad komponenta pređe u **error**, otvara se **jedan** alert u tabeli `alerts`. Kad se oporavi, alert se sam zatvara (`resolved_by = 'healthcheck'`).
+- **Claude izlogovan.** `claude auth status` ne troši tokene. Dok je `claude_auth` u stanju error, dispatcher ne pokreće runove. Posle `/login` healthcheck u roku od 5 minuta vraća stanje u ok i runovi se nastavljaju sami. Ako se logout otkrije usred runa, run dobija status `auth_error`, a to se slučaju ne računa kao greška.
+- **Chrome ugašen.** Healthcheck ga sam ponovo pokreće (status warn). Ako restart ne uspe, prelazi u error.
+- **Run koji visi** duže od 70 minuta bez procesa zatvara se kao `incomplete`.
+
+```sql
+SELECT * FROM v_system_health;   -- stanje svih komponenti
+SELECT * FROM v_open_alerts;     -- šta čeka čoveka
+-- ručno zatvaranje alerta za platformu (npr. posle rešene captcha provere):
+UPDATE alerts SET status = 'resolved', resolved_by = 'ime', resolved_at = now(), resolution_note = 'šta je urađeno' WHERE id = '...';
+```
+
+Logovi: `/srv/social-agent/logs/dispatch.log`, `/srv/social-agent/logs/health.log`.
