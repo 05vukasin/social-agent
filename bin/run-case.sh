@@ -111,14 +111,26 @@ rc=0
 # NB: not `.is_error // true` — jq's // treats false as missing.
 is_error="$(jq -r 'if has("is_error") then .is_error else true end' "$OUT" 2>/dev/null || echo true)"
 result_text="$(jq -r '.result // ""' "$OUT" 2>/dev/null || true)"
-if ((rc == 124 || rc == 137)); then
-  status=timeout
-elif grep -qiE 'usage limit|rate.?limit|limit (reached|will reset)|resets at' <<<"$result_text$(cat "$DIR/runs/$TS.stderr")"; then
-  status=rate_limited
-elif [[ "$is_error" == "false" && $rc -eq 0 ]]; then
+# Classify. Only look for auth/limit wording when the run did NOT succeed — a successful
+# summary may legitimately mention "login" or "limit".
+diag="$result_text $(cat "$DIR/runs/$TS.stderr")"
+if [[ "$is_error" == "false" && $rc -eq 0 ]]; then
   status=success
+elif ((rc == 124 || rc == 137)); then
+  status=timeout
+elif grep -qiE 'not logged in|please run /login|run .?claude.? (auth )?login|invalid api key|authentication_error|oauth token.*(expired|revoked|invalid)|401 unauthorized' <<<"$diag" \
+     || ! timeout 30 claude auth status 2>/dev/null | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+  status=auth_error
+elif grep -qiE 'usage limit|rate.?limit|limit (reached|will reset)|resets at' <<<"$diag"; then
+  status=rate_limited
 else
   status=failed
+fi
+
+if [[ "$status" == success ]]; then
+  q <<<"SELECT report_health('claude_auth', 'ok', 'ulogovan (potvrđeno uspešnim runom)');" >/dev/null
+elif [[ "$status" == auth_error ]]; then
+  q <<<"SELECT report_health('claude_auth', 'error', 'Claude NIJE ulogovan (otkriveno u runu) — dispatcher čeka. Reši: VNC → terminal → claude → /login');" >/dev/null
 fi
 
 stats="$(jq -c '{session_id, num_turns, duration_ms, total_cost_usd, subtype, usage: {input: .usage.input_tokens, output: .usage.output_tokens, cache_read: .usage.cache_read_input_tokens}}' "$OUT" 2>/dev/null || echo '{}')"
@@ -134,13 +146,18 @@ UPDATE runs SET status = :'st', finished_at = now(), stats = :'stats'::jsonb,
 WHERE id = :'r';
 SQL
 
-# Schedule next run. Rate limit → retry in an hour; 3 failures in a row → pause + alert.
+# Schedule next run. Rate limit → retry in an hour; auth error → retry as soon as a human
+# logs in (dispatcher waits on claude_auth health) and it is not the case's fault;
+# 3 real failures in a row → pause + alert.
 q -v c="$CASE_ID" -v st="$status" -v r="$RUN_ID" <<'SQL'
 UPDATE cases SET
   last_run_at = now(),
   last_run_status = :'st',
-  consecutive_failures = CASE WHEN :'st' IN ('success', 'rate_limited') THEN 0 ELSE consecutive_failures + 1 END,
+  consecutive_failures = CASE WHEN :'st' IN ('success', 'rate_limited') THEN 0
+                              WHEN :'st' = 'auth_error' THEN consecutive_failures
+                              ELSE consecutive_failures + 1 END,
   next_run_at = now() + CASE WHEN :'st' = 'rate_limited' THEN interval '60 minutes'
+                             WHEN :'st' = 'auth_error' THEN interval '0 minutes'
                              ELSE make_interval(mins => interval_minutes) END
 WHERE id = :'c';
 INSERT INTO alerts (kind, case_id, run_id, message)

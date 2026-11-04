@@ -3,19 +3,22 @@
 # On first install the dispatcher starts PAUSED ($SA_DATA/dispatcher.paused) — remove that file
 # after a successful manual run:  rm /srv/social-agent/dispatcher.paused
 
-DESCRIPTION="agent: skilovi, hookovi, dispatcher cron (svaki minut)"
+DESCRIPTION="agent: skilovi, hookovi, dispatcher (svaki minut) + healthcheck (svakih 5 min)"
 
 CRON_FILE=/etc/cron.d/social-agent-dispatch
+HEALTH_CRON=/etc/cron.d/social-agent-health
 
 skills() { find "$SA_REPO/claude/skills" -mindepth 1 -maxdepth 1 -type d -printf '%f\n'; }
 
 cron_line() { echo "* * * * * $AGENT_USER bash -lc '$SA_REPO/bin/dispatch.sh' >> $SA_DATA/logs/dispatch.log 2>&1"; }
+health_line() { echo "*/5 * * * * $AGENT_USER bash -lc '$SA_REPO/bin/healthcheck.sh --quiet' >> $SA_DATA/logs/health.log 2>&1"; }
 
 check() {
   local home="/home/$AGENT_USER" s
   for s in $(skills); do [[ -L "$home/.claude/skills/$s" ]] || return 1; done
   jq -e '.hooks.PostToolUse' "$home/.claude/settings.json" &>/dev/null || return 1
   [[ -f "$CRON_FILE" ]] && grep -qF "$(cron_line)" "$CRON_FILE" || return 1
+  [[ -f "$HEALTH_CRON" ]] && grep -qF "$(health_line)" "$HEALTH_CRON" || return 1
   [[ -f "$SA_DATA/shared/platforms/web.md" ]] || return 1
   as_agent 'command -v agentctl' &>/dev/null || return 1
 }
@@ -61,4 +64,11 @@ apply() {
     cron_line
   } > "$CRON_FILE"
   chmod 644 "$CRON_FILE"
+
+  {
+    echo "# social-agent healthcheck → system_health + alerts — managed by modules/80-agent.sh"
+    health_line
+  } > "$HEALTH_CRON"
+  chmod 644 "$HEALTH_CRON"
+  as_agent "$SA_REPO/bin/healthcheck.sh" || true
 }

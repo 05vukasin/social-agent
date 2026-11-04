@@ -13,9 +13,11 @@ set -Eeuo pipefail
 exec 9>"$SA_DATA/run.lock"
 flock -n 9 || exit 0                             # a run is in progress
 
+# Claude logged out → don't start runs that can only fail; healthcheck flips it back after /login.
 next="$(psql -X -q -tA -v ON_ERROR_STOP=1 <<'SQL'
 SELECT c.id FROM cases c
-WHERE c.status = 'active'
+WHERE NOT EXISTS (SELECT 1 FROM system_health WHERE component = 'claude_auth' AND status = 'error')
+  AND c.status = 'active'
   AND c.next_run_at <= now()
   AND cardinality(case_runnable_platforms(c.id)) > 0
   AND (c.active_from IS NULL OR c.active_to IS NULL
